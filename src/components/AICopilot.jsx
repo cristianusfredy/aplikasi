@@ -18,11 +18,14 @@ export default function AICopilot({ prdContent, onInsertText, onUpdateDocument, 
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [apiKey, setApiKey] = useState('');
+  const [provider, setProvider] = useState('gemini');
   const messagesEndRef = useRef(null);
 
   // Load API key from local storage on render & periodically
   useEffect(() => {
-    const key = localStorage.getItem('gemini_api_key') || '';
+    const currentProvider = localStorage.getItem('ai_provider') || 'gemini';
+    const key = localStorage.getItem(`${currentProvider}_api_key`) || localStorage.getItem('gemini_api_key') || '';
+    setProvider(currentProvider);
     setApiKey(key);
   }, [prdContent]);
 
@@ -56,14 +59,8 @@ Kembalikan HANYA kode diagram Mermaid yang telah diperbaiki di dalam blok kode \
       return simulateResponse(userPrompt, mode);
     }
 
-    const model = localStorage.getItem('gemini_model') || 'models/gemini-1.5-flash';
-    const url = `https://generativelanguage.googleapis.com/v1beta/${model}:generateContent?key=${apiKey}`;
-
-    // Structure history for Gemini API, skipping the initial welcome message from model
-    const contents = chatHistory.slice(1).map(m => ({
-      role: m.role === 'model' ? 'model' : 'user',
-      parts: [{ text: m.text }]
-    }));
+    const currentProvider = localStorage.getItem('ai_provider') || 'gemini';
+    const model = localStorage.getItem(`${currentProvider}_model`) || (currentProvider === 'gemini' ? localStorage.getItem('gemini_model') : '');
 
     // Add system instruction as prefix or context
     let systemContext = `Anda adalah Antigravity AI Copilot, pakar Product Manager dan System Architect. 
@@ -113,29 +110,62 @@ ${prdContent.slice(0, 3000)}
 `;
     }
 
-    contents.push({
-      role: 'user',
-      parts: [{ text: `${systemContext}\n\nPertanyaan/Permintaan Pengguna:\n${userPrompt}` }]
-    });
-
     try {
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ contents }),
-      });
+      if (currentProvider === 'gemini') {
+        const url = `https://generativelanguage.googleapis.com/v1beta/${model || 'models/gemini-1.5-flash'}:generateContent?key=${apiKey}`;
+        const contents = chatHistory.slice(1).map(m => ({
+          role: m.role === 'model' ? 'model' : 'user',
+          parts: [{ text: m.text }]
+        }));
 
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error?.message || 'Error communicating with Gemini');
+        contents.push({
+          role: 'user',
+          parts: [{ text: `${systemContext}\n\nPertanyaan/Permintaan Pengguna:\n${userPrompt}` }]
+        });
+
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contents }),
+        });
+
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error?.message || 'Error communicating with Gemini');
+        return data.candidates?.[0]?.content?.parts?.[0]?.text || 'Maaf, saya tidak mendapatkan respons.';
+      } else if (currentProvider === 'openrouter' || currentProvider === 'groq') {
+        const url = currentProvider === 'openrouter' ? `https://openrouter.ai/api/v1/chat/completions` : `https://api.groq.com/openai/v1/chat/completions`;
+        const messages = [];
+        
+        messages.push({ role: 'system', content: systemContext });
+        
+        chatHistory.slice(1).forEach(m => {
+          messages.push({
+            role: m.role === 'model' ? 'assistant' : 'user',
+            content: m.text
+          });
+        });
+        
+        messages.push({ role: 'user', content: userPrompt });
+
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey}`
+          },
+          body: JSON.stringify({
+            model: model || (currentProvider === 'openrouter' ? 'anthropic/claude-3-haiku' : 'llama3-8b-8192'),
+            messages: messages
+          }),
+        });
+
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error?.message || `Error communicating with ${currentProvider === 'openrouter' ? 'OpenRouter' : 'Groq'}`);
+        return data.choices?.[0]?.message?.content || 'Maaf, saya tidak mendapatkan respons.';
       }
-
-      return data.candidates?.[0]?.content?.parts?.[0]?.text || 'Maaf, saya tidak mendapatkan respons.';
     } catch (err) {
-      console.error("Gemini API Error:", err);
-      return `Gagal memanggil Gemini API: ${err.message}. Pastikan API Key Anda valid.`;
+      console.error("AI API Error:", err);
+      return `Gagal memanggil AI API: ${err.message}. Pastikan API Key Anda valid.`;
     }
   };
 
@@ -191,7 +221,7 @@ Aplikasi ini dirancang untuk memecahkan masalah efisiensi operasional pada bisni
         } else {
           resolve(`Saya menerima input Anda: "${prompt}"
 
-Saat ini asisten berjalan dalam **Mode Simulasi**. Untuk melakukan brainstorming riil menggunakan kecerdasan Gemini 1.5 Flash, silakan masukkan API Key Gemini Anda di menu Pengaturan.
+Saat ini asisten berjalan dalam **Mode Simulasi**. Untuk melakukan brainstorming riil, silakan pilih AI Provider dan masukkan API Key di menu Pengaturan.
 
 **Tips membuat PRD berkualitas:**
 1. Rinci target pengguna dan masalah utama.

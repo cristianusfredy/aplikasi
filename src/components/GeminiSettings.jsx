@@ -2,39 +2,62 @@ import React, { useState, useEffect } from 'react';
 import { Key, CheckCircle, XCircle, RefreshCw, HelpCircle, ChevronDown } from 'lucide-react';
 
 export default function GeminiSettings({ onKeySaved }) {
+  const [provider, setProvider] = useState('gemini');
   const [apiKey, setApiKey] = useState('');
   const [status, setStatus] = useState('idle'); // idle, testing, success, error
   const [errorMessage, setErrorMessage] = useState('');
   const [models, setModels] = useState([]);
-  const [selectedModel, setSelectedModel] = useState('models/gemini-1.5-flash');
+  const [selectedModel, setSelectedModel] = useState('');
 
   useEffect(() => {
-    const savedKey = localStorage.getItem('gemini_api_key') || '';
-    const savedModel = localStorage.getItem('gemini_model') || 'models/gemini-1.5-flash';
+    const savedProvider = localStorage.getItem('ai_provider') || 'gemini';
+    const savedKey = localStorage.getItem(`${savedProvider}_api_key`) || localStorage.getItem('gemini_api_key') || '';
+    const savedModel = localStorage.getItem(`${savedProvider}_model`) || localStorage.getItem('gemini_model') || '';
+    
+    setProvider(savedProvider);
     setApiKey(savedKey);
     setSelectedModel(savedModel);
+    
     if (savedKey) {
       setStatus('success');
-      // Fetch models silently to populate list
-      fetchModelsList(savedKey, savedModel);
+      fetchModelsList(savedProvider, savedKey, savedModel);
     }
   }, []);
 
-  const fetchModelsList = async (key, currentModel) => {
+  const fetchModelsList = async (currentProvider, key, currentModel) => {
     try {
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${key}`);
-      if (res.ok) {
-        const data = await res.json();
-        const available = (data.models || [])
-          .filter(m => m.supportedGenerationMethods?.includes('generateContent'))
-          .map(m => m.name);
-        
-        setModels(available);
-        if (available.length > 0 && !available.includes(currentModel)) {
-          // Fallback to first flash model or first available
-          const bestModel = available.find(m => m.includes('flash')) || available[0];
-          setSelectedModel(bestModel);
-          localStorage.setItem('gemini_model', bestModel);
+      if (currentProvider === 'gemini') {
+        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${key}`);
+        if (res.ok) {
+          const data = await res.json();
+          const available = (data.models || [])
+            .filter(m => m.supportedGenerationMethods?.includes('generateContent'))
+            .map(m => m.name);
+          
+          setModels(available);
+          if (available.length > 0 && (!currentModel || !available.includes(currentModel))) {
+            const bestModel = available.find(m => m.includes('flash')) || available[0];
+            setSelectedModel(bestModel);
+            localStorage.setItem('gemini_model', bestModel);
+          }
+        }
+      } else if (currentProvider === 'openrouter' || currentProvider === 'groq') {
+        const baseUrl = currentProvider === 'openrouter' ? 'https://openrouter.ai/api/v1' : 'https://api.groq.com/openai/v1';
+        const res = await fetch(`${baseUrl}/models`, {
+          headers: { 'Authorization': `Bearer ${key}` }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const available = (data.data || []).map(m => m.id);
+          
+          setModels(available);
+          if (available.length > 0 && (!currentModel || !available.includes(currentModel))) {
+            const bestModel = currentProvider === 'openrouter' 
+              ? (available.find(m => m.includes('haiku') || m.includes('flash')) || available[0])
+              : (available.find(m => m.includes('llama3')) || available[0]);
+            setSelectedModel(bestModel);
+            localStorage.setItem(`${currentProvider}_model`, bestModel);
+          }
         }
       }
     } catch (e) {
@@ -42,17 +65,43 @@ export default function GeminiSettings({ onKeySaved }) {
     }
   };
 
+  const handleProviderChange = (newProvider) => {
+    setProvider(newProvider);
+    const savedKey = localStorage.getItem(`${newProvider}_api_key`) || (newProvider === 'gemini' ? localStorage.getItem('gemini_api_key') : '');
+    const savedModel = localStorage.getItem(`${newProvider}_model`) || (newProvider === 'gemini' ? localStorage.getItem('gemini_model') : '');
+    setApiKey(savedKey || '');
+    setSelectedModel(savedModel || '');
+    setStatus(savedKey ? 'success' : 'idle');
+    setErrorMessage('');
+    setModels([]);
+    if (savedKey) {
+      fetchModelsList(newProvider, savedKey, savedModel);
+    }
+  };
+
   const handleSave = (e) => {
     e.preventDefault();
     if (!apiKey.trim()) {
-      localStorage.removeItem('gemini_api_key');
-      localStorage.removeItem('gemini_model');
+      localStorage.removeItem(`${provider}_api_key`);
+      localStorage.removeItem(`${provider}_model`);
+      if (provider === 'gemini') {
+        localStorage.removeItem('gemini_api_key');
+        localStorage.removeItem('gemini_model');
+      }
       setStatus('idle');
       if (onKeySaved) onKeySaved('');
       return;
     }
-    localStorage.setItem('gemini_api_key', apiKey.trim());
-    localStorage.setItem('gemini_model', selectedModel);
+    localStorage.setItem('ai_provider', provider);
+    localStorage.setItem(`${provider}_api_key`, apiKey.trim());
+    localStorage.setItem(`${provider}_model`, selectedModel);
+    
+    // Legacy support
+    if (provider === 'gemini') {
+      localStorage.setItem('gemini_api_key', apiKey.trim());
+      localStorage.setItem('gemini_model', selectedModel);
+    }
+    
     setStatus('success');
     if (onKeySaved) onKeySaved(apiKey.trim());
   };
@@ -68,76 +117,100 @@ export default function GeminiSettings({ onKeySaved }) {
     setErrorMessage('');
 
     try {
-      // Step 1: Fetch list of supported models first
-      const listResponse = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey.trim()}`
-      );
-      
-      if (!listResponse.ok) {
-        const errData = await listResponse.json();
-        setStatus('error');
-        setErrorMessage(errData.error?.message || 'API Key tidak valid atau diblokir.');
-        return;
-      }
-
-      const listData = await listResponse.json();
-      const availableModels = (listData.models || [])
-        .filter(m => m.supportedGenerationMethods?.includes('generateContent'))
-        .map(m => m.name);
-
-      if (availableModels.length === 0) {
-        setStatus('error');
-        setErrorMessage('Tidak ada model yang mendukung generateContent untuk API Key ini.');
-        return;
-      }
-
-      setModels(availableModels);
-      
-      // Select best model
+      let availableModels = [];
       let modelToTest = selectedModel;
-      if (!availableModels.includes(modelToTest)) {
-        modelToTest = availableModels.find(m => m.includes('flash')) || availableModels[0];
-        setSelectedModel(modelToTest);
+
+      if (provider === 'gemini') {
+        const listResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey.trim()}`);
+        if (!listResponse.ok) {
+          const errData = await listResponse.json();
+          throw new Error(errData.error?.message || 'API Key tidak valid atau diblokir.');
+        }
+        const listData = await listResponse.json();
+        availableModels = (listData.models || []).filter(m => m.supportedGenerationMethods?.includes('generateContent')).map(m => m.name);
+        
+        if (availableModels.length === 0) throw new Error('Tidak ada model yang mendukung generateContent untuk API Key ini.');
+        setModels(availableModels);
+        
+        if (!availableModels.includes(modelToTest)) {
+          modelToTest = availableModels.find(m => m.includes('flash')) || availableModels[0];
+          setSelectedModel(modelToTest);
+        }
+
+        const testResponse = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/${modelToTest}:generateContent?key=${apiKey.trim()}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ contents: [{ parts: [{ text: 'Hello' }] }] }),
+          }
+        );
+        const testData = await testResponse.json();
+        if (!testResponse.ok) throw new Error(testData.error?.message || 'Error tidak diketahui.');
+
+      } else if (provider === 'openrouter' || provider === 'groq') {
+        const baseUrl = provider === 'openrouter' ? 'https://openrouter.ai/api/v1' : 'https://api.groq.com/openai/v1';
+        const listResponse = await fetch(`${baseUrl}/models`, {
+          headers: { 'Authorization': `Bearer ${apiKey.trim()}` }
+        });
+        if (!listResponse.ok) {
+          throw new Error(`Gagal memverifikasi API Key ${provider === 'openrouter' ? 'OpenRouter' : 'Groq'}.`);
+        }
+        const listData = await listResponse.json();
+        availableModels = (listData.data || []).map(m => m.id);
+        
+        if (availableModels.length === 0) throw new Error('Tidak ada model tersedia.');
+        setModels(availableModels);
+        
+        if (!availableModels.includes(modelToTest)) {
+          modelToTest = provider === 'openrouter'
+            ? (availableModels.find(m => m.includes('haiku') || m.includes('flash')) || availableModels[0])
+            : (availableModels.find(m => m.includes('llama3')) || availableModels[0]);
+          setSelectedModel(modelToTest);
+        }
+
+        const testResponse = await fetch(
+          `${baseUrl}/chat/completions`,
+          {
+            method: 'POST',
+            headers: { 
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${apiKey.trim()}`
+            },
+            body: JSON.stringify({ 
+              model: modelToTest,
+              messages: [{ role: 'user', content: 'Hello' }]
+            }),
+          }
+        );
+        const testData = await testResponse.json();
+        if (!testResponse.ok) throw new Error(testData.error?.message || 'Error tidak diketahui.');
       }
 
-      // Step 2: Test generateContent with the chosen model
-      const testResponse = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/${modelToTest}:generateContent?key=${apiKey.trim()}`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: 'Hello' }] }],
-          }),
-        }
-      );
-
-      const testData = await testResponse.json();
-
-      if (testResponse.ok) {
-        setStatus('success');
+      setStatus('success');
+      localStorage.setItem('ai_provider', provider);
+      localStorage.setItem(`${provider}_api_key`, apiKey.trim());
+      localStorage.setItem(`${provider}_model`, modelToTest);
+      
+      if (provider === 'gemini') {
         localStorage.setItem('gemini_api_key', apiKey.trim());
         localStorage.setItem('gemini_model', modelToTest);
-        if (onKeySaved) onKeySaved(apiKey.trim());
-      } else {
-        setStatus('error');
-        setErrorMessage(
-          `Gagal menguji model ${modelToTest.replace('models/', '')}: ${
-            testData.error?.message || 'Error tidak diketahui.'
-          }`
-        );
       }
+      
+      if (onKeySaved) onKeySaved(apiKey.trim());
+
     } catch (err) {
       setStatus('error');
-      setErrorMessage('Terjadi kesalahan jaringan.');
+      setErrorMessage(err.message || 'Terjadi kesalahan jaringan.');
     }
   };
 
   const handleModelChange = (model) => {
     setSelectedModel(model);
-    localStorage.setItem('gemini_model', model);
+    localStorage.setItem(`${provider}_model`, model);
+    if (provider === 'gemini') {
+      localStorage.setItem('gemini_model', model);
+    }
   };
 
   return (
@@ -147,29 +220,47 @@ export default function GeminiSettings({ onKeySaved }) {
           <Key className="w-5 h-5" />
         </div>
         <div>
-          <h3 className="font-semibold text-white">Pengaturan Gemini API</h3>
-          <p className="text-xs text-slate-400">Untuk brainstorming & bantuan AI riil</p>
+          <h3 className="font-semibold text-white">Pengaturan AI Provider</h3>
+          <p className="text-xs text-slate-400">Pilih AI untuk brainstorming</p>
         </div>
       </div>
 
       <form onSubmit={handleSave} className="space-y-4">
         <div>
+          <label className="block text-xs font-medium text-slate-300 mb-1.5">
+            AI Provider
+          </label>
+          <div className="relative">
+            <select
+              value={provider}
+              onChange={(e) => handleProviderChange(e.target.value)}
+              className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white appearance-none focus:outline-none focus:border-indigo-500 transition-colors cursor-pointer"
+            >
+              <option value="gemini">Google Gemini</option>
+              <option value="openrouter">OpenRouter</option>
+              <option value="groq">Groq</option>
+            </select>
+            <ChevronDown className="w-4 h-4 text-slate-450 absolute right-3 top-2.5 pointer-events-none" />
+          </div>
+        </div>
+
+        <div>
           <label className="block text-xs font-medium text-slate-300 mb-1.5 flex items-center justify-between">
-            <span>Gemini API Key</span>
+            <span>API Key {provider === 'gemini' ? 'Gemini' : provider === 'openrouter' ? 'OpenRouter' : 'Groq'}</span>
             <a
-              href="https://aistudio.google.com/app/apikey"
+              href={provider === 'gemini' ? "https://aistudio.google.com/app/apikey" : provider === 'openrouter' ? "https://openrouter.ai/keys" : "https://console.groq.com/keys"}
               target="_blank"
               rel="noopener noreferrer"
               className="text-[10px] text-indigo-400 hover:underline flex items-center gap-0.5"
             >
-              <HelpCircle className="w-3 h-3" /> Dapatkan API Key Gratis
+              <HelpCircle className="w-3 h-3" /> Dapatkan API Key
             </a>
           </label>
           <input
             type="password"
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
-            placeholder="AIzaSy..."
+            placeholder={provider === 'gemini' ? "AIzaSy..." : provider === 'openrouter' ? "sk-or-v1-..." : "gsk_..."}
             className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition-colors"
           />
         </div>
@@ -177,7 +268,7 @@ export default function GeminiSettings({ onKeySaved }) {
         {models.length > 0 && (
           <div>
             <label className="block text-xs font-medium text-slate-300 mb-1.5">
-              Pilih Model Gemini
+              Pilih Model
             </label>
             <div className="relative">
               <select
@@ -187,7 +278,7 @@ export default function GeminiSettings({ onKeySaved }) {
               >
                 {models.map((m) => (
                   <option key={m} value={m}>
-                    {m.replace('models/', '')}
+                    {m.startsWith('models/') ? m.replace('models/', '') : m}
                   </option>
                 ))}
               </select>

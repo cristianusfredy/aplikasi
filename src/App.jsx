@@ -193,8 +193,21 @@ export default function App() {
   const [editorText, setEditorText] = useState('');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
+  const [isSettingsClosing, setIsSettingsClosing] = useState(false);
   const [fixMermaidRequest, setFixMermaidRequest] = useState(null);
   const [copied, setCopied] = useState(false);
+  
+  // Renaming state
+  const [renamingDocId, setRenamingDocId] = useState(null);
+  const [renameValue, setRenameValue] = useState('');
+
+  const handleCloseSettings = () => {
+    setIsSettingsClosing(true);
+    setTimeout(() => {
+      setShowSettings(false);
+      setIsSettingsClosing(false);
+    }, 280);
+  };
 
   // Load documents from LocalStorage on mount
   useEffect(() => {
@@ -273,6 +286,33 @@ export default function App() {
     setActiveDocId(newDoc.id);
     setEditorText(content);
     localStorage.setItem('prd_documents', JSON.stringify(updated));
+  };
+
+  // Rename document
+  const handleStartRename = (doc, e) => {
+    e.stopPropagation();
+    setRenamingDocId(doc.id);
+    setRenameValue(doc.title);
+  };
+
+  const handleSaveRename = (id, e) => {
+    if (e) e.stopPropagation();
+    if (renameValue.trim() === '') {
+      setRenamingDocId(null);
+      return;
+    }
+    
+    setDocuments(prev => {
+      const updated = prev.map(doc => {
+        if (doc.id === id) {
+          return { ...doc, title: renameValue.trim(), updatedAt: new Date().toISOString() };
+        }
+        return doc;
+      });
+      localStorage.setItem('prd_documents', JSON.stringify(updated));
+      return updated;
+    });
+    setRenamingDocId(null);
   };
 
   // Delete document
@@ -451,23 +491,57 @@ export default function App() {
           {documents.map(doc => (
             <div
               key={doc.id}
-              onClick={() => handleSelectDoc(doc.id)}
+              onClick={() => {
+                if (renamingDocId !== doc.id) handleSelectDoc(doc.id);
+              }}
               className={`group flex items-center justify-between px-3 py-2 rounded-lg cursor-pointer transition-all text-xs ${
                 activeDocId === doc.id 
                   ? 'bg-slate-850 border border-slate-750 text-indigo-300 shadow'
                   : 'hover:bg-slate-850/50 text-slate-400 hover:text-slate-200'
               }`}
             >
-              <div className="flex items-center gap-2 overflow-hidden">
+              <div className="flex items-center gap-2 overflow-hidden flex-1 mr-2">
                 <FileText className="w-3.5 h-3.5 shrink-0 text-slate-500 group-hover:text-indigo-400" />
-                <span className="truncate">{doc.title}</span>
+                {renamingDocId === doc.id ? (
+                  <input
+                    type="text"
+                    value={renameValue}
+                    onChange={(e) => setRenameValue(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') handleSaveRename(doc.id, e);
+                      if (e.key === 'Escape') {
+                        e.stopPropagation();
+                        setRenamingDocId(null);
+                      }
+                    }}
+                    onBlur={(e) => handleSaveRename(doc.id, e)}
+                    onClick={(e) => e.stopPropagation()}
+                    autoFocus
+                    className="w-full bg-slate-900 border border-indigo-500 rounded px-1.5 py-0.5 text-white focus:outline-none"
+                  />
+                ) : (
+                  <span className="truncate" title={doc.title}>{doc.title}</span>
+                )}
               </div>
-              <button
-                onClick={(e) => handleDeleteDoc(doc.id, e)}
-                className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-slate-700 text-slate-500 hover:text-rose-400 rounded transition-all"
-              >
-                <Trash2 className="w-3 h-3" />
-              </button>
+              
+              {renamingDocId !== doc.id && (
+                <div className="flex items-center shrink-0">
+                  <button
+                    onClick={(e) => handleStartRename(doc, e)}
+                    className="opacity-0 group-hover:opacity-100 p-0.5 mr-1 hover:bg-slate-700 text-slate-500 hover:text-indigo-400 rounded transition-all"
+                    title="Ubah Nama"
+                  >
+                    <Edit3 className="w-3 h-3" />
+                  </button>
+                  <button
+                    onClick={(e) => handleDeleteDoc(doc.id, e)}
+                    className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-slate-700 text-slate-500 hover:text-rose-400 rounded transition-all"
+                    title="Hapus"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                  </button>
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -479,7 +553,13 @@ export default function App() {
             <span className="truncate">{user}</span>
           </div>
           <button
-            onClick={() => setShowSettings(!showSettings)}
+            onClick={() => {
+              if (showSettings) {
+                handleCloseSettings();
+              } else {
+                setShowSettings(true);
+              }
+            }}
             className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs transition-colors ${
               showSettings ? 'bg-indigo-600/10 text-indigo-400' : 'text-slate-400 hover:bg-slate-850 hover:text-slate-200'
             }`}
@@ -555,8 +635,8 @@ export default function App() {
 
         {/* Settings Modal/Drawer Overlay */}
         {showSettings && (
-          <div className="p-4 bg-slate-900 border-b border-slate-800 flex justify-center animate-fade-in shrink-0">
-            <GeminiSettings onKeySaved={() => {}} />
+          <div className={`p-4 bg-slate-900 border-b border-slate-800 flex justify-center shrink-0 ${isSettingsClosing ? 'animate-fade-out' : 'animate-fade-in'}`}>
+            <GeminiSettings onKeySaved={handleCloseSettings} />
           </div>
         )}
 
