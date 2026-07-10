@@ -2,13 +2,15 @@ import React, { useState, useEffect } from 'react';
 import { 
   FileText, Plus, Settings, Sparkles, BookOpen, Trash2, 
   PanelLeftClose, PanelLeft, Split, Eye, Edit3, Save, Copy, 
-  Bold, Italic, Code, Database, Share2, Check, LogOut, User, Download
+  Bold, Italic, Code, Database, Share2, Check, LogOut, User, Download,
+  Layers
 } from 'lucide-react';
 import { marked } from 'marked';
 import MermaidRenderer from './components/MermaidRenderer';
 import AICopilot from './components/AICopilot';
 import GeminiSettings from './components/GeminiSettings';
 import AuthScreen from './components/AuthScreen';
+import WorkflowMode from './components/WorkflowMode';
 
 // Set marked options for security and convenience
 marked.setOptions({
@@ -196,6 +198,7 @@ export default function App() {
   const [isSettingsClosing, setIsSettingsClosing] = useState(false);
   const [fixMermaidRequest, setFixMermaidRequest] = useState(null);
   const [copied, setCopied] = useState(false);
+  const [workflowMode, setWorkflowMode] = useState(false);
   
   // Renaming state
   const [renamingDocId, setRenamingDocId] = useState(null);
@@ -270,6 +273,7 @@ export default function App() {
     if (doc) {
       setActiveDocId(id);
       setEditorText(doc.content);
+      setWorkflowMode(false);
     }
   };
 
@@ -630,6 +634,18 @@ export default function App() {
               <FileText className="w-3.5 h-3.5" />
               <span>Cetak / PDF</span>
             </button>
+            <div className="h-5 w-[1px] bg-slate-800" />
+            <button
+              onClick={() => setWorkflowMode(!workflowMode)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                workflowMode 
+                  ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-600/20'
+                  : 'bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white shadow-lg shadow-indigo-600/20'
+              }`}
+            >
+              <Layers className="w-3.5 h-3.5" />
+              <span>{workflowMode ? 'Kembali Editor' : '🚀 Buat Workflow'}</span>
+            </button>
           </div>
         </div>
 
@@ -640,7 +656,14 @@ export default function App() {
           </div>
         )}
 
-        {/* Content Area: Split Editor & Preview */}
+        {/* Content Area: Workflow Mode OR Split Editor & Preview */}
+        {workflowMode ? (
+          <WorkflowMode
+            prdContent={editorText}
+            docId={activeDocId}
+            onExitWorkflow={() => setWorkflowMode(false)}
+          />
+        ) : (
         <div className="flex-1 flex overflow-hidden print:block print:overflow-visible print:h-auto">
           
           {/* A. Editor Panel */}
@@ -723,6 +746,7 @@ export default function App() {
             </div>
           </div>
         </div>
+        )}
       </div>
 
       {/* 3. RIGHT PANEL: AI Brainstorming Copilot */}
